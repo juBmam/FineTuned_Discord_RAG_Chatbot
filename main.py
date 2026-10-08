@@ -540,9 +540,14 @@ async def paimon_ask(
             )
             return
 
+        formatted_response = (
+            f"**Question:** {question}\n"
+            f"**Answer:**\n{answer}"
+        )
+
         await send_long_response(
             interaction,
-            answer
+            formatted_response
         )
 
     except TimeoutError:
@@ -870,6 +875,66 @@ async def duel(
         winner
     )
 
+# -----------------------------
+# !8ball
+# -----------------------------
+
+@bot.command(name="8ball")
+@commands.cooldown(
+    5,
+    30.0,
+    commands.BucketType.user
+)
+async def eight_ball(
+    ctx: commands.Context,
+    *,
+    question: str = None,
+):
+    if not question:
+        await ctx.reply(
+            "Ask Paimon a yes-or-no question first!"
+        )
+        return
+
+    answer = random.choice([
+        "Yes.",
+        "No.",
+    ])
+
+    await ctx.reply(
+        f"🎱 Paimon says: **{answer}**"
+    )
+
+# -----------------------------
+# Im dad!
+# -----------------------------
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    # Ignore messages from bots
+    if message.author.bot:
+        return
+
+    content = message.content.strip()
+
+    # Match "I'm ..." or "I am ..."
+    match = re.search(
+        r"\b(?:i['’]?m|i am)\s+(.+)",
+        content,
+        re.IGNORECASE
+    )
+
+    if match:
+        thing = match.group(1).strip()
+
+        if thing:
+            await message.reply(
+                f"Hi {thing}, I'm Paimon!"
+            )
+
+    # Important: keeps prefix commands working
+    await bot.process_commands(message)
 
 # -----------------------------
 # Prefix command error handling
