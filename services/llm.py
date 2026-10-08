@@ -111,6 +111,19 @@ ANSWERING:
 - End naturally once the answer is complete.
 """
 
+async def translate_to_chinese(text: str) -> str:
+    response = await client.responses.create(
+        model="gpt-5-mini",
+        instructions=(
+            "Translate the user's message into natural Traditional Chinese. "
+            "Output only the translation, with no explanation."
+        ),
+        input=text,
+    )
+
+    return response.output_text.strip()
+
+
 async def ask_llm(
     question: str
 ) -> str:

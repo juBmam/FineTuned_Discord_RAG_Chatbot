@@ -10,7 +10,7 @@ import random
 from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
-from services.llm import ask_llm
+from services.llm import ask_llm, translate_to_chinese
 from pint import UnitRegistry
 
 
@@ -27,7 +27,6 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is not set")
-
 
 # -----------------------------
 # Logging
@@ -61,6 +60,8 @@ llm_semaphore = asyncio.Semaphore(
     MAX_CONCURRENT_LLM_REQUESTS
 )
 
+TRANSLATE_CHANCE = 0.03  # 3% of messages
+REACTION_CHANCE = 0.05  # 5% of messages
 
 # -----------------------------
 # Paimonify
@@ -859,7 +860,7 @@ async def duel(
         f"**{winner} got tag-teamed by Hu Tao, Sparkle, Burnice, and Yuzuha.**",
         f"**Carl revealed {winner} is not gay.**",
         f"**{winner} is the Lebron James of randomly selected options.**",
-        f"**Steam Status: {winner} is now playing: Femboy Futa House.**"
+        f"**Steam Status: {winner} is now playing: Femboy Futa House.**",
         f"**{winner} was attacked by a kemonomimi in the woods. All of a sudden they have to take care of dozens of wolf children! Every night their number grows! Fail to do so and their partner, the Wolf Mama, will kill them! How many can they sustain?**"
     ]
 
@@ -912,28 +913,65 @@ async def eight_ball(
 
 @bot.event
 async def on_message(message: discord.Message):
-    # Ignore messages from bots
     if message.author.bot:
         return
 
-    content = message.content.strip()
+    triggered = False
 
-    # Match "I'm ..." or "I am ..."
-    match = re.search(
+    # Dadbot feature
+    dadmatch = re.search(
         r"\b(?:i['’]?m|i am)\s+(.+)",
-        content,
+        message.content,
         re.IGNORECASE
     )
 
-    if match:
-        thing = match.group(1).strip()
+    if dadmatch:
+        x = dadmatch.group(1).strip()
 
-        if thing:
+        if x:
             await message.reply(
-                f"Hi {thing}, I'm Paimon!"
+                f"Hi {x}, I'm Paimon!"
+            )
+            triggered = True
+
+    # Random Chinese translation
+    if (
+        not triggered
+        and message.content.strip()
+        and not message.content.startswith("!")
+        and random.random() <= TRANSLATE_CHANCE
+    ):
+        try:
+            translation = await translate_to_chinese(
+                message.content
             )
 
-    # Important: keeps prefix commands working
+            await message.reply(
+                f"{translation}"
+            )
+
+        except Exception:
+            logger.exception(
+                "Random Chinese translation failed."
+            )
+      # Random emoji reaction
+
+    if (
+        not triggered
+        and message.content.strip()
+        and not message.content.startswith("!")
+        and random.random() <= REACTION_CHANCE
+    ):
+        try:
+            emoji = "😂"
+            await message.add_reaction(emoji)
+
+        except Exception:
+            logger.exception(
+                "Random emoji reaction failed."
+            )
+
+
     await bot.process_commands(message)
 
 # -----------------------------
