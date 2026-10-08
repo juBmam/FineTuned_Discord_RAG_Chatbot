@@ -925,7 +925,7 @@ async def on_message(message: discord.Message):
         re.IGNORECASE
     )
 
-    if dadmatch:
+    if (dadmatch and random.random() <= REACTION_CHANCE):
         x = dadmatch.group(1).strip()
 
         if x:
