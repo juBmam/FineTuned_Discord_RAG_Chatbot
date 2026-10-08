@@ -854,6 +854,7 @@ async def duel(
         f"**{winner} got tag-teamed by Hu Tao, Sparkle, Burnice, and Yuzuha.**",
         f"**Carl revealed {winner} is not gay.**",
         f"**{winner} is the Lebron James of randomly selected options.**",
+        f"**Steam Status: {winner} is now playing: Femboy Futa House.**"
         f"**{winner} was attacked by a kemonomimi in the woods. All of a sudden they have to take care of dozens of wolf children! Every night their number grows! Fail to do so and their partner, the Wolf Mama, will kill them! How many can they sustain?**"
     ]
 
