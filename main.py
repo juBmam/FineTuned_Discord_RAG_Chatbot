@@ -60,8 +60,38 @@ llm_semaphore = asyncio.Semaphore(
     MAX_CONCURRENT_LLM_REQUESTS
 )
 
-TRANSLATE_CHANCE = 0.03  # 3% of messages
-REACTION_CHANCE = 0.05  # 5% of messages
+TRANSLATE_CHANCE = 0.01  # 3% of messages
+REACTION_CHANCE = 0.01  # 5% of messages
+
+PROMPT_INJECTION_PATTERNS = [
+    r"ignore\s+(all\s+)?previous\s+instructions",
+    r"ignore\s+(all\s+)?prior\s+instructions",
+    r"disregard\s+(all\s+)?previous\s+instructions",
+    r"override\s+(the\s+)?system\s+prompt",
+    r"reveal\s+(your\s+)?system\s+prompt",
+    r"show\s+(me\s+)?(your\s+)?system\s+prompt",
+    r"print\s+(your\s+)?instructions",
+    r"reveal\s+(your\s+)?hidden\s+instructions",
+    r"developer\s+message",
+    r"system\s+message",
+    r"you\s+are\s+now\s+",
+    r"act\s+as\s+if\s+",
+    r"forget\s+(all\s+)?previous\s+instructions",
+    r"higher[-\s]?priority\s+instruction",
+    r"api[_\s-]?key",
+    r"access[_\s-]?token",
+    r"environment\s+variables?",
+    r"secret\s+keys?",
+]
+
+
+def looks_like_prompt_injection(text: str) -> bool:
+    normalized = text.lower().strip()
+
+    return any(
+        re.search(pattern, normalized, re.IGNORECASE)
+        for pattern in PROMPT_INJECTION_PATTERNS
+    )
 
 # -----------------------------
 # Paimonify
@@ -462,7 +492,7 @@ async def paimon_ping(
     interaction: discord.Interaction
 ):
     await interaction.response.send_message(
-        "pong"
+        "Hi, I'm Paimon!"
     )
 
 
@@ -507,6 +537,16 @@ async def paimon_ask(
             ephemeral=True
         )
         return
+    
+    if looks_like_prompt_injection(question):
+        logger.warning(
+            "Potential prompt injection blocked | user=%s",
+            interaction.user
+        )
+
+        await interaction.response.send_message(
+            "Nice try! Paimon's not falling for that one."
+        )
 
     # Tell Discord we're processing
     await interaction.response.defer()
@@ -543,7 +583,7 @@ async def paimon_ask(
 
         formatted_response = (
             f"**Question:** {question}\n"
-            f"**Answer:**\n{answer}"
+            f"**Answer:** {answer}"
         )
 
         await send_long_response(
