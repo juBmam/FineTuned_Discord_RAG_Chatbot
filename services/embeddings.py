@@ -8,7 +8,7 @@ MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 model = SentenceTransformer(
     MODEL_NAME,
-    token=os.getenv("HF_TOKEN")
+    token=os.getenv("HF_TOKEN", "").strip() or None
 )
 
 

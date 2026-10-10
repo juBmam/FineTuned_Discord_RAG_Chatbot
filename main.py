@@ -6,11 +6,15 @@ import asyncio
 import logging
 import discord
 import random
+from collections import deque
+
+RECENT_EMOJI_IDS = deque(maxlen=20)
+RECENT_DUEL_MESSAGE_IDS = deque(maxlen=10)
 
 from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
-from services.llm import ask_llm, translate_to_chinese
+from services.graph import run_paimon_chat, run_translation
 from pint import UnitRegistry
 
 
@@ -23,7 +27,7 @@ ureg = UnitRegistry()
 
 load_dotenv(override=True)
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is not set")
@@ -60,29 +64,33 @@ llm_semaphore = asyncio.Semaphore(
     MAX_CONCURRENT_LLM_REQUESTS
 )
 
-TRANSLATE_CHANCE = 0.01  # 3% of messages
-REACTION_CHANCE = 0.01  # 5% of messages
+TRANSLATE_CHANCE = 0.01
+REACTION_CHANCE = 0.05
+DADBOT_CHANCE = 0.1
+
+BLOCKED_USER_IDS = {
+    int(value.strip())
+    for value in os.getenv("BLOCKED_USER_IDS", "").split(",")
+    if value.strip().isdigit()
+}
+
+
+def is_blocked_user(user_id: int) -> bool:
+    return user_id in BLOCKED_USER_IDS
 
 PROMPT_INJECTION_PATTERNS = [
     r"ignore\s+(all\s+)?previous\s+instructions",
     r"ignore\s+(all\s+)?prior\s+instructions",
     r"disregard\s+(all\s+)?previous\s+instructions",
+    r"forget\s+(all\s+)?previous\s+instructions",
     r"override\s+(the\s+)?system\s+prompt",
     r"reveal\s+(your\s+)?system\s+prompt",
-    r"show\s+(me\s+)?(your\s+)?system\s+prompt",
-    r"print\s+(your\s+)?instructions",
-    r"reveal\s+(your\s+)?hidden\s+instructions",
-    r"developer\s+message",
-    r"system\s+message",
-    r"you\s+are\s+now\s+",
-    r"act\s+as\s+if\s+",
-    r"forget\s+(all\s+)?previous\s+instructions",
+    r"show\s+(me\s+)?(your\s+)?hidden\s+instructions",
+    r"print\s+(your\s+)?system\s+prompt",
+    r"treat\s+this\s+as\s+(a\s+)?system\s+message",
     r"higher[-\s]?priority\s+instruction",
-    r"api[_\s-]?key",
-    r"access[_\s-]?token",
-    r"environment\s+variables?",
-    r"secret\s+keys?",
 ]
+
 
 
 def looks_like_prompt_injection(text: str) -> bool:
@@ -447,7 +455,10 @@ async def ignore_bot_users(
     prefix commands.
     """
 
-    return not ctx.author.bot
+    return (
+        not ctx.author.bot
+        and not is_blocked_user(ctx.author.id)
+    )
 
 
 # -----------------------------
@@ -491,6 +502,13 @@ async def on_ready():
 async def paimon_ping(
     interaction: discord.Interaction
 ):
+    if is_blocked_user(interaction.user.id):
+        await interaction.response.send_message(
+            "Paimon isn't answering you.",
+            ephemeral=True,
+        )
+        return
+
     await interaction.response.send_message(
         "Hi, I'm Paimon!"
     )
@@ -520,6 +538,13 @@ async def paimon_ask(
 
     question = question.strip()
 
+    if is_blocked_user(interaction.user.id):
+        await interaction.response.send_message(
+            "Paimon isn't answering you.",
+            ephemeral=True,
+        )
+        return
+
     if not question:
         await interaction.response.send_message(
             "Please enter a question.",
@@ -547,6 +572,7 @@ async def paimon_ask(
         await interaction.response.send_message(
             "Nice try! Paimon's not falling for that one."
         )
+        return
 
     # Tell Discord we're processing
     await interaction.response.defer()
@@ -571,8 +597,9 @@ async def paimon_ask(
                     )
                 )
 
-                answer = await ask_llm(
-                    question
+                answer = await run_paimon_chat(
+                    user_id=str(interaction.user.id),
+                    question=question,
                 )
 
         if not answer:
@@ -849,73 +876,118 @@ async def duel(
         )
         return
 
-    winner = random.choice(
-        [option_a, option_b]
+    winner = random.choice([
+        option_a,
+        option_b
+    ])
+
+    loser = (
+        option_b
+        if winner == option_a
+        else option_a
     )
 
-    if winner == option_a:
-        loser = option_b
-    else:
-        loser = option_a
-
-
-    messages = [
-        f"**{winner} got the Victory Royale.**",
-        f"**{winner} got sent to Ram Ranch.**",
-        f"**{winner} is going to Brazil.**",
-        f"**{winner} did not win the 50/50.**",
-        f"**{winner} received a free trip to a Private Island™.**",
-        f"**{winner} received a mandatory invitation to a Diddy Party.**",
-        f"**{winner} won the 50/50 in the greatest gacha ever.**",
-        f"**Sending Scihub to {winner}'s location.**",
-        f"**{winner} was forced to wait for Azur Promelia global release.**",
-        f"**{winner} was turned into a marketable plushie.**",
-        f"**{winner} became a Zenless Zone Zero stunner.**",
-        f"**{winner} was forced to update Prydwen for Honkai Star Rail.**",
-        f"**{winner} NTR'd all of {loser}'s waifus in Mudae.**",
-        f"**{winner} was forced to consume slop.**",
-        f"**{winner} won a billion primogems (for real this time).**",
-        f"**Internet artists genderbent {winner}.**",
-        f"**If you goon, {winner} dies. Of course, we gooned.**",
-        f"**{winner} vanished searching for Nobu.**",
-        f"**{winner} vanished searching for Sed.**",
-        f"**{winner} vanished searching for Loli.**",
-        f"**{winner}'s favorite live-service game announced EOS.**",
-        f"**{winner} opened a Mr. Beast Discord Image.**",
-        f"**{winner} got W Groomed at a Smash Ultimate tournament.**",
-        f"**Get ready to learn Chinese, {winner}.**",
-        f"**Mihoyo satellite targeting system online: {winner} will be terminated in 15 seconds.**",
-        f"**{winner} gambled the house away.**",
-        f"**{winner} in fact, could not handle allat.**",
-        f"**Carl revealed {winner} is gay.**",
-        f"**Gorlock sat on {loser}.**",
-        f"**{winner} ejected {loser} from an airlock.**",
-        f"**{winner} fired {loser} into the sun.**",
-        f"**{winner} sent {loser} to #blue-archive.**",
-        f"**{winner} powercrept {loser} into T5.**",
-        f"**{winner} plapped {loser}.**",
-        f"**{winner}'s Discord account was flagged for inappropriate content.**",
-        f"**With this treasure, {winner} summoned and was beaten by Mahoraga.**",
-        f"**{winner} was disassembled by Grace Howard!**",
-        f"**{winner} got tag-teamed by Hu Tao, Sparkle, Burnice, and Yuzuha.**",
-        f"**Carl revealed {winner} is not gay.**",
-        f"**{winner} is the Lebron James of randomly selected options.**",
-        f"**Steam Status: {winner} is now playing: Femboy Futa House.**",
-        f"**{winner} was attacked by a kemonomimi in the woods. All of a sudden they have to take care of dozens of wolf children! Every night their number grows! Fail to do so and their partner, the Wolf Mama, will kill them! How many can they sustain?**"
+    message_templates = [
+        "**{winner} got the Victory Royale.**",
+        "**{winner} got sent to Ram Ranch.**",
+        "**{winner} is going to Brazil.**",
+        "**{winner} did not win the 50/50.**",
+        "**{winner} received a free trip to a Private Island™.**",
+        "**{winner} received a mandatory invitation to a Diddy Party.**",
+        "**{winner} won the 50/50 in the greatest gacha ever.**",
+        "**Sending Scihub to {winner}'s location.**",
+        "**{winner} was turned into a marketable plushie.**",
+        "**{winner} became a Zenless Zone Zero stunner.**",
+        "**{winner} was forced to update Prydwen for Honkai Star Rail.**",
+        "**{winner} NTR'd all of {loser}'s waifus in Mudae.**",
+        "**{winner} was forced to play Wuthering Waves.**",
+        "**{winner} won a billion primogems (for real this time).**",
+        "**Yumemizuki Mizuki will give {winner} good dreams tonight.**",
+        "**Internet artists genderbent {winner}.**",
+        "**If you goon, {winner} dies. Of course, we gooned.**",
+        "**{winner} vanished searching for Nobu.**",
+        "**{winner} vanished searching for Sed.**",
+        "**{winner} vanished searching for Loli.**",
+        "**{winner} vanished searching for Shakkun.**",
+        "**{winner} vanished searching for Zaizen.**",
+        "**{winner} vanished searching for Omega.**",
+        "**{winner} vanished searching for Ajoule.**",
+        "**{winner} got lost looking for respawning chests.**",
+        "**{winner}'s favorite live-service game announced EOS.**",
+        "**{winner} opened a Mr. Beast Discord Image.**",
+        "**{winner} got W Groomed at a Smash Ultimate tournament.**",
+        "**Get ready to learn Chinese, {winner}.**",
+        "**Mihoyo satellite targeting system online: {winner} will be terminated in 15 seconds.**",
+        "**{winner} gambled the house away.**",
+        "**{winner} in fact, could not handle allat.**",
+        "**Carl revealed {winner} is gay.**",
+        "**Carl revealed {winner} is not gay.**",
+        "**Gorlock sat on {loser}.**",
+        "**Zhu Yuan sat on {loser}.**",
+        "**{winner} got crushed playing Rock-Paper-Scissors with Dialyn.**",
+        "**{winner} was disassembled by Grace Howard!**",
+        "**{winner} got tag-teamed by Hu Tao, Sparkle, Burnice, and Yuzuha.**",
+        "**{loser} ate Rina's cooking.**",
+        "**{winner} ejected {loser} from an airlock.**",
+        "**{winner} fired {loser} into the sun.**",
+        "**{winner} sent {loser} to #blue-archive.**",
+        "**{winner} powercrept {loser} into T5.**",
+        "**{winner} plapped {loser}.**",
+        "**{winner}'s favorite gacha did not make the top 10 of this month's revenue chart.**",
+        "**{winner} was banished from Elder Yue's heavenly sect.**",
+        "**{winner} won a lifetime supply of Jub's kebabs.**",
+        "**{winner} courted death.**",
+        "**{winner} did not receive the 5th aakek.**",
+        "**{winner}'s Discord account was flagged for inappropriate content.**",
+        "**{winner} is the Lebron James of randomly selected options.**",
+        "**{winner} is the Bronny James of randomly selected options.**",
+        "**Steam Status: {winner} is now playing: Femboy Futa House.**",
+        "**Steam Status: {winner} is now playing: Sex with Hitler 3.**",
+        "**Steam Status: {winner} is now playing: Showering with your Dad Simulator.**",
+        "**Steam Status: {winner} is now playing: Super Lesbian Animal RPG.**",
+        "**{winner} was attacked by a kemonomimi in the woods. All of a sudden they have to take care of dozens of wolf children! Every night their number grows! Fail to do so and their partner, the Wolf Mama, will kill them! How many can they sustain?**",
     ]
 
+    # Exclude any template used in the previous 10 duels
+    eligible_ids = [
+        index
+        for index in range(len(message_templates))
+        if index not in RECENT_DUEL_MESSAGE_IDS
+    ]
+
+    # Safety fallback if the pool ever becomes too small
+    if not eligible_ids:
+        eligible_ids = list(
+            range(len(message_templates))
+        )
+
+    message_id = random.choice(
+        eligible_ids
+    )
+
+    RECENT_DUEL_MESSAGE_IDS.append(
+        message_id
+    )
+
+    result = message_templates[
+        message_id
+    ].format(
+        winner=winner,
+        loser=loser,
+    )
+
     await ctx.reply(
-        random.choice(messages)
+        result
     )
 
     logger.info(
-        "%s used !duel: %s vs %s -> %s",
+        "%s used !duel: %s vs %s -> %s | message_id=%s",
         ctx.author,
         option_a,
         option_b,
-        winner
+        winner,
+        message_id,
     )
-
 # -----------------------------
 # !8ball
 # -----------------------------
@@ -953,19 +1025,20 @@ async def eight_ball(
 
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot:
+    if message.author.bot or is_blocked_user(message.author.id):
         return
 
     triggered = False
+    content = message.content.strip()
 
     # Dadbot feature
     dadmatch = re.search(
         r"\b(?:i['’]?m|i am)\s+(.+)",
         message.content,
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
-    if (dadmatch and random.random() <= REACTION_CHANCE):
+    if dadmatch and random.random() <= DADBOT_CHANCE:
         x = dadmatch.group(1).strip()
 
         if x:
@@ -974,43 +1047,81 @@ async def on_message(message: discord.Message):
             )
             triggered = True
 
-    # Random Chinese translation
+    # Random Chinese translation through the LangGraph translation route
     if (
         not triggered
-        and message.content.strip()
-        and not message.content.startswith("!")
+        and content
+        and not content.startswith("!")
         and random.random() <= TRANSLATE_CHANCE
     ):
         try:
-            translation = await translate_to_chinese(
-                message.content
-            )
+            translation = await run_translation(content)
 
-            await message.reply(
-                f"{translation}"
-            )
+            if translation:
+                await message.reply(translation)
+                triggered = True
 
         except Exception:
             logger.exception(
                 "Random Chinese translation failed."
             )
-      # Random emoji reaction
 
+    # Random reaction using custom emojis available in this server.
     if (
         not triggered
-        and message.content.strip()
-        and not message.content.startswith("!")
+        and content
+        and not content.startswith("!")
         and random.random() <= REACTION_CHANCE
     ):
         try:
-            emoji = "😂"
+            custom_emojis = [
+                emoji
+                for emoji in (message.guild.emojis if message.guild else [])
+                if emoji.available
+                and f"custom:{emoji.id}" not in RECENT_EMOJI_IDS
+            ]
+
+            fallback_emojis = [
+                emoji
+                for emoji in ["😂", "🌹", "💀", "🥀", "📮", "🫃"]
+                if f"unicode:{emoji}" not in RECENT_EMOJI_IDS
+            ]
+
+            available_emojis = custom_emojis + fallback_emojis
+
+            if not available_emojis:
+                RECENT_EMOJI_IDS.clear()
+                available_emojis = (
+                    [
+                        emoji
+                        for emoji in (
+                            message.guild.emojis
+                            if message.guild
+                            else []
+                        )
+                        if emoji.available
+                    ]
+                    + ["😂", "🌹", "💀", "🥀", "📮", "🫃"]
+                )
+
+            emoji = random.choice(available_emojis)
+
+            if isinstance(emoji, discord.Emoji):
+                RECENT_EMOJI_IDS.append(
+                    f"custom:{emoji.id}"
+                )
+            else:
+                RECENT_EMOJI_IDS.append(
+                    f"unicode:{emoji}"
+                )
+
             await message.add_reaction(emoji)
+            triggered = True
 
         except Exception:
             logger.exception(
                 "Random emoji reaction failed."
             )
-
 
     await bot.process_commands(message)
 
@@ -1023,6 +1134,9 @@ async def on_command_error(
     ctx: commands.Context,
     error
 ):
+
+    if isinstance(error, commands.CheckFailure):
+        return
 
     # User exceeded cooldown
     if isinstance(

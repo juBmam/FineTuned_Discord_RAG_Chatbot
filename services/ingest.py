@@ -5,8 +5,8 @@ from pypdf import PdfReader
 from services.embeddings import create_embedding
 
 
-KNOWLEDGE_DIR = Path("data/knowledge")
-PERSONALITY_DIR = Path("data/personality")
+KNOWLEDGE_DIR = Path("data/Knowledge")
+PERSONALITY_DIR = Path("data/Personality")
 
 KNOWLEDGE_INDEX_PATH = Path(
     "data/knowledge_index.json"
