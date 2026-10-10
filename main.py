@@ -538,13 +538,6 @@ async def paimon_ask(
 
     question = question.strip()
 
-    if is_blocked_user(interaction.user.id):
-        await interaction.response.send_message(
-            "Paimon isn't answering you.",
-            ephemeral=True,
-        )
-        return
-
     if not question:
         await interaction.response.send_message(
             "Please enter a question.",
@@ -562,15 +555,17 @@ async def paimon_ask(
             ephemeral=True
         )
         return
-    
+
     if looks_like_prompt_injection(question):
         logger.warning(
-            "Potential prompt injection blocked | user=%s",
-            interaction.user
+            "Potential prompt injection blocked | user=%s | question=%r",
+            interaction.user,
+            question[:200],
         )
 
         await interaction.response.send_message(
-            "Nice try! Paimon's not falling for that one."
+            "Nice try! Paimon's not falling for that one.",
+            ephemeral=True
         )
         return
 
@@ -578,6 +573,16 @@ async def paimon_ask(
     await interaction.response.defer()
 
     try:
+        logger.info(
+            "%s used /paimon_ask in guild %s | question=%r",
+            interaction.user,
+            (
+                interaction.guild.id
+                if interaction.guild
+                else "DM"
+            ),
+            question,
+        )
 
         # Hard timeout
         async with asyncio.timeout(
@@ -588,40 +593,53 @@ async def paimon_ask(
             async with llm_semaphore:
 
                 logger.info(
-                    "%s used /paimon_ask in guild %s",
+                    "Starting LLM request | user=%s",
                     interaction.user,
-                    (
-                        interaction.guild.id
-                        if interaction.guild
-                        else "DM"
-                    )
                 )
 
                 answer = await run_paimon_chat(
-                    user_id=str(interaction.user.id),
                     question=question,
+                    user_id=str(interaction.user.id),
+                )
+
+                logger.info(
+                    "LLM completed | user=%s | answer_length=%s | answer_preview=%r",
+                    interaction.user,
+                    len(answer) if answer else 0,
+                    answer[:100] if answer else None,
                 )
 
         if not answer:
+            logger.warning(
+                "LLM returned empty answer | user=%s",
+                interaction.user,
+            )
+
             await interaction.followup.send(
                 "I couldn't generate a response."
             )
             return
 
-        formatted_response = (
-            f"**Question:** {question}\n"
-            f"**Answer:** {answer}"
+        logger.info(
+            "Sending response to Discord | user=%s",
+            interaction.user,
         )
 
         await send_long_response(
             interaction,
-            formatted_response
+            answer
+        )
+
+        logger.info(
+            "Discord response sent successfully | user=%s",
+            interaction.user,
         )
 
     except TimeoutError:
         logger.warning(
-            "LLM request timed out for user %s",
-            interaction.user
+            "LLM request timed out | user=%s | question=%r",
+            interaction.user,
+            question[:200],
         )
 
         await interaction.followup.send(
@@ -630,13 +648,19 @@ async def paimon_ask(
 
     except Exception:
         logger.exception(
-            "/paimon_ask failed"
+            "/paimon_ask failed | user=%s | question=%r",
+            interaction.user,
+            question[:200],
         )
 
-        await interaction.followup.send(
-            "Something went wrong while generating the response."
-        )
-
+        try:
+            await interaction.followup.send(
+                "Something went wrong while generating the response."
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send /paimon_ask error response to Discord"
+            )
 
 # -----------------------------
 # !paimonify
