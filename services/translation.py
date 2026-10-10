@@ -20,11 +20,11 @@ async def translate_to_chinese(text: str) -> str:
     response = await client.responses.create(
         model=TRANSLATION_MODEL,
         instructions=(
-            "Translate the user's message into natural Simplified Chinese. "
+            "Translate the user's message into natural Traditional Chinese. "
             "Return only the translation with no explanation or commentary."
         ),
         input=text,
-        max_output_tokens=180,
+        max_output_tokens=300,
     )
 
     return response.output_text.strip()
