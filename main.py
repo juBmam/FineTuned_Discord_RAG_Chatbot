@@ -625,10 +625,15 @@ async def paimon_ask(
             interaction.user,
         )
 
+        formatted_response = (
+            f"**Question:** {question}\n"
+            f"**Answer:** {answer}"
+        )
+
         await send_long_response(
             interaction,
-            answer
-        )
+            formatted_response
+)
 
         logger.info(
             "Discord response sent successfully | user=%s",
