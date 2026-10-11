@@ -105,6 +105,7 @@ async def retrieve_context_node(
 
     has_kqm_context = any(
         "kqm" in chunk.get("source", "").lower()
+        and chunk.get("score", 0) >= 0.50
         for chunk in knowledge_chunks
     )
 
