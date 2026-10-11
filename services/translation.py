@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "gpt-5-mini").strip()
+TRANSLATION_MODEL = os.getenv("TRANSLATION_MODEL", "gpt-6-luna").strip()
 
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set")

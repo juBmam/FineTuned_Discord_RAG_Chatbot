@@ -16,19 +16,52 @@ class PaimonState(TypedDict, total=False):
     history: list[dict]
     knowledge_context: str
     personality_context: str
+    has_kqm_context: bool
     response: str
 
 
-def _format_retrieval_chunks(chunks: list[dict], label: str) -> str:
+def _format_retrieval_chunks(
+    chunks: list[dict],
+    label: str
+) -> str:
     parts = []
 
-    for i, chunk in enumerate(chunks, start=1):
+    for i, chunk in enumerate(
+        chunks,
+        start=1
+    ):
+        metadata = [
+            f"{label} {i}",
+            f"Source: {chunk['source']}",
+        ]
+
+        if chunk.get("category"):
+            metadata.append(
+                f"Category: {chunk['category']}"
+            )
+
+        if chunk.get("file"):
+            metadata.append(
+                f"File: {chunk['file']}"
+            )
+
+        if chunk.get("section"):
+            metadata.append(
+                f"Section: {chunk['section']}"
+            )
+
+        metadata.append(
+            f"Chunk: {chunk.get('chunk_number')}"
+        )
+
+        metadata.append(
+            f"Similarity: {chunk['score']:.3f}"
+        )
+
         parts.append(
-            f"{label} {i}\n"
-            f"Source: {chunk['source']}\n"
-            f"Chunk: {chunk.get('chunk_number')}\n"
-            f"Similarity: {chunk['score']:.3f}\n\n"
-            f"{chunk['text']}"
+            "\n".join(metadata)
+            + "\n\n"
+            + chunk["text"]
         )
 
     return "\n\n".join(parts)
@@ -46,7 +79,9 @@ async def load_memory_node(state: PaimonState) -> dict:
     return {"history": history}
 
 
-async def retrieve_context_node(state: PaimonState) -> dict:
+async def retrieve_context_node(
+    state: PaimonState
+) -> dict:
     question = state["text"]
 
     knowledge_task = asyncio.to_thread(
@@ -54,38 +89,68 @@ async def retrieve_context_node(state: PaimonState) -> dict:
         question,
         5,
     )
+
     personality_task = asyncio.to_thread(
         retrieve_personality,
         question,
         5,
     )
 
-    knowledge_chunks, personality_chunks = await asyncio.gather(
-        knowledge_task,
-        personality_task,
+    knowledge_chunks, personality_chunks = (
+        await asyncio.gather(
+            knowledge_task,
+            personality_task,
+        )
+    )
+
+    has_kqm_context = any(
+        "kqm" in chunk.get("source", "").lower()
+        for chunk in knowledge_chunks
     )
 
     return {
-        "knowledge_context": _format_retrieval_chunks(
-            knowledge_chunks,
-            "KNOWLEDGE SOURCE",
+        "knowledge_context": (
+            _format_retrieval_chunks(
+                knowledge_chunks,
+                "KNOWLEDGE SOURCE",
+            )
         ),
-        "personality_context": _format_retrieval_chunks(
-            personality_chunks,
-            "STYLE EXAMPLE",
+        "personality_context": (
+            _format_retrieval_chunks(
+                personality_chunks,
+                "STYLE EXAMPLE",
+            )
         ),
+        "has_kqm_context": has_kqm_context,
     }
 
 
-async def generate_chat_node(state: PaimonState) -> dict:
+async def generate_chat_node(
+    state: PaimonState
+) -> dict:
     answer = await generate_paimon_answer(
         question=state["text"],
-        knowledge_context=state.get("knowledge_context", ""),
-        personality_context=state.get("personality_context", ""),
-        history=state.get("history", []),
+        knowledge_context=state.get(
+            "knowledge_context",
+            ""
+        ),
+        personality_context=state.get(
+            "personality_context",
+            ""
+        ),
+        history=state.get(
+            "history",
+            []
+        ),
+        has_kqm_context=state.get(
+            "has_kqm_context",
+            False
+        ),
     )
 
-    return {"response": answer}
+    return {
+        "response": answer
+    }
 
 
 async def save_memory_node(state: PaimonState) -> dict:

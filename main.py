@@ -7,16 +7,13 @@ import logging
 import discord
 import random
 from collections import deque
-
 RECENT_EMOJI_IDS = deque(maxlen=20)
 RECENT_DUEL_MESSAGE_IDS = deque(maxlen=10)
-
 from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
 from services.graph import run_paimon_chat, run_translation
 from pint import UnitRegistry
-
 
 # -----------------------------
 # Environment
@@ -24,11 +21,8 @@ from pint import UnitRegistry
 
 nlp = spacy.load("en_core_web_sm")
 ureg = UnitRegistry()
-
 load_dotenv(override=True)
-
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
-
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN is not set")
 
@@ -40,9 +34,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s"
 )
-
 logger = logging.getLogger("heavenly-principles")
-
 
 # -----------------------------
 # Global configuration
@@ -50,34 +42,25 @@ logger = logging.getLogger("heavenly-principles")
 
 # Maximum size of a question sent to the LLM
 MAX_QUESTION_LENGTH = 2000
-
 # Maximum size of a replied-to message that utility commands will process
 MAX_REPLY_LENGTH = 4000
-
 # Maximum amount of time we'll wait for an LLM response
 LLM_TIMEOUT_SECONDS = 45
-
 # Maximum number of LLM calls running at the same time
 MAX_CONCURRENT_LLM_REQUESTS = 3
-
 llm_semaphore = asyncio.Semaphore(
     MAX_CONCURRENT_LLM_REQUESTS
 )
-
 TRANSLATE_CHANCE = 0.01
 REACTION_CHANCE = 0.05
 DADBOT_CHANCE = 0.1
-
 BLOCKED_USER_IDS = {
     int(value.strip())
     for value in os.getenv("BLOCKED_USER_IDS", "").split(",")
     if value.strip().isdigit()
 }
-
-
 def is_blocked_user(user_id: int) -> bool:
     return user_id in BLOCKED_USER_IDS
-
 PROMPT_INJECTION_PATTERNS = [
     r"ignore\s+(all\s+)?previous\s+instructions",
     r"ignore\s+(all\s+)?prior\s+instructions",
@@ -90,12 +73,8 @@ PROMPT_INJECTION_PATTERNS = [
     r"treat\s+this\s+as\s+(a\s+)?system\s+message",
     r"higher[-\s]?priority\s+instruction",
 ]
-
-
-
 def looks_like_prompt_injection(text: str) -> bool:
     normalized = text.lower().strip()
-
     return any(
         re.search(pattern, normalized, re.IGNORECASE)
         for pattern in PROMPT_INJECTION_PATTERNS
@@ -108,42 +87,31 @@ def looks_like_prompt_injection(text: str) -> bool:
 def paimonify_text(text: str) -> str:
     doc = nlp(text)
     replacements = {}
-
     for token in doc:
-
         # Replace first-person pronouns
         if token.lower_ == "i":
             replacements[token.i] = "Paimon"
-
             if token.dep_ in ("nsubj", "nsubjpass"):
                 verb = token.head
-
                 # Check whether this verb is governed by a modal
                 has_modal = any(
                     child.dep_ == "aux"
                     and child.tag_ == "MD"
                     for child in verb.children
                 )
-
                 # Only change simple present-tense verbs
                 if verb.tag_ == "VBP" and not has_modal:
                     inflected = verb._.inflect("VBZ")
-
                     if inflected:
                         replacements[verb.i] = inflected
-
         elif token.lower_ == "me":
             replacements[token.i] = "Paimon"
-
         elif token.lower_ == "my":
             replacements[token.i] = "Paimon's"
-
         elif token.lower_ == "mine":
             replacements[token.i] = "Paimon's"
-
         elif token.lower_ == "myself":
             replacements[token.i] = "Paimon"
-
         # Handle "I am" -> "Paimon is"
         elif token.lower_ == "am":
             subject = next(
@@ -155,26 +123,19 @@ def paimonify_text(text: str) -> str:
                 ),
                 None,
             )
-
             if subject:
                 replacements[token.i] = "is"
-
     output = []
-
     for token in doc:
         replacement = replacements.get(
             token.i,
             token.text
         )
-
         output.append(
             replacement + token.whitespace_
         )
-
     transformed = "".join(output)
-
     return f"*{transformed}* (๑˃ᴗ˂)ﻭ"
-
 
 # -----------------------------
 # Imperial -> Metric
@@ -186,57 +147,45 @@ def convert_to_metric(text: str) -> str:
         "°f": "degC",
         "f": "degC",
         "fahrenheit": "degC",
-
         # Length
         "in": "cm",
         "inch": "cm",
         "inches": "cm",
-
         "ft": "m",
         "foot": "m",
         "feet": "m",
-
         "yd": "m",
         "yard": "m",
         "yards": "m",
-
         "mi": "km",
         "mile": "km",
         "miles": "km",
-
         # Weight / mass
         "oz": "g",
         "ounce": "g",
         "ounces": "g",
-
         "lb": "kg",
         "lbs": "kg",
         "pound": "kg",
         "pounds": "kg",
-
         # Volume
         "fl oz": "ml",
         "fluid ounce": "ml",
         "fluid ounces": "ml",
-
         "cup": "ml",
         "cups": "ml",
-
         "pt": "l",
         "pint": "l",
         "pints": "l",
-
         "qt": "l",
         "quart": "l",
         "quarts": "l",
-
         "gal": "l",
         "gallon": "l",
         "gallons": "l",
     }
-
     pattern = re.compile(
-        r"(-?\d+(?:\.\d+)?)\s*"
+        r"(-?\d+(?:**\\.**\d+)?)\s*"
         r"(°F|F|fahrenheit|"
         r"fluid ounces?|fl oz|"
         r"inches?|in|"
@@ -251,19 +200,14 @@ def convert_to_metric(text: str) -> str:
         r"gallons?|gal)\b",
         re.IGNORECASE,
     )
-
     def replace(match):
         value = float(match.group(1))
         original_unit = match.group(2)
         unit = original_unit.lower()
-
         target_unit = conversions.get(unit)
-
         if not target_unit:
             return match.group(0)
-
         try:
-
             # Fahrenheit needs special handling
             if unit in {
                 "°f",
@@ -273,33 +217,25 @@ def convert_to_metric(text: str) -> str:
                 metric_value = (
                     (value - 32) * 5 / 9
                 )
-
                 return f"{metric_value:.1f} °C"
-
             quantity = value * ureg(unit)
-
             converted = quantity.to(
                 target_unit
             )
-
             metric_value = converted.magnitude
-
             # Keep output readable
             if abs(metric_value) >= 100:
                 formatted = (
                     f"{metric_value:.0f}"
                 )
-
             elif abs(metric_value) >= 10:
                 formatted = (
                     f"{metric_value:.1f}"
                 )
-
             else:
                 formatted = (
                     f"{metric_value:.2f}"
                 )
-
             display_units = {
                 "cm": "cm",
                 "m": "m",
@@ -309,19 +245,15 @@ def convert_to_metric(text: str) -> str:
                 "ml": "mL",
                 "l": "L",
             }
-
             return (
                 f"{formatted} "
                 f"{display_units[target_unit]}"
             )
-
         except Exception:
             logger.exception(
                 "Metric conversion failed"
             )
-
             return match.group(0)
-
     return pattern.sub(
         replace,
         text
@@ -335,36 +267,28 @@ def uwuify_text(text: str) -> str:
     # Replace non-leading r/l with w inside each word
     def transform_word(match):
         word = match.group(0)
-
         if len(word) <= 1:
             return word
-
         body = word[:-1]
         last = word[-1]
-
         body = re.sub(r"[rl]", "w", body)
         body = re.sub(r"[RL]", "W", body)
-
         return body + last
-
     transformed = re.sub(
         r"\b[A-Za-z]+\b",
         transform_word,
         text
     )
-
     # Add "uwu" to the end of each sentence
     transformed = re.sub(
         r"([.!?]+)(?=\s|$)",
         r" uwu\1",
         transformed
     )
-
     # If the text doesn't end in sentence punctuation,
     # still append lol
     if not re.search(r"[.!?]\s*$", transformed):
         transformed = transformed.rstrip() + " uwu~"
-
     return f"*{transformed}*"
 
 # -----------------------------
@@ -372,20 +296,66 @@ def uwuify_text(text: str) -> str:
 # -----------------------------
 
 intents = discord.Intents.default()
-
 # Required for !prefix commands
 intents.message_content = True
-
 bot = commands.Bot(
     command_prefix="!",
     intents=intents,
 )
 
-
 # -----------------------------
 # Helpers
 # -----------------------------
 
+# -----------------------------
+# Link sanitization
+# -----------------------------
+
+MARKDOWN_LINK_PATTERN = re.compile(
+    r"\[([^\]]+)\]\(\s*<?"
+    r"(?:https?://|www\.|(?:[A-Za-z0-9-]+\.)+"
+    r"(?:com|org|net|edu|gov|io|gg|co|ai|app|dev|me|tv|xyz|info|biz|"
+    r"us|uk|ca|de|fr|jp|cn|au|in|ly))"
+    r"[^)\s>]*>?\s*\)",
+    re.IGNORECASE,
+)
+DISCORD_INVITE_PATTERN = re.compile(
+    r"<?(?:https?://)?(?:www\.)?"
+    r"(?:discord\.gg|discord(?:app)?\.com/invite)"
+    r"/[A-Za-z0-9-]+(?:\?[^\s<>]*)?>?",
+    re.IGNORECASE,
+)
+URL_PATTERN = re.compile(
+    r"<?(?:https?://|www\.)[^\s<>]+>?",
+    re.IGNORECASE,
+)
+BARE_DOMAIN_PATTERN = re.compile(
+    r"(?<![@\w])"
+    r"(?:[A-Za-z0-9-]+\.)+"
+    r"(?:com|org|net|edu|gov|io|gg|co|ai|app|dev|me|tv|xyz|info|biz|"
+    r"us|uk|ca|de|fr|jp|cn|au|in|ly)"
+    r"(?::\d{2,5})?"
+    r"(?:/[^\s<>]*)?",
+    re.IGNORECASE,
+)
+def remove_links(text: str) -> str:
+    if not text:
+        return ""
+    # Preserve the visible label from Markdown links.
+    # [Google](https://google.com) -> Google
+    cleaned = MARKDOWN_LINK_PATTERN.sub(r"\1", text)
+    # Remove Discord invites before the more general URL patterns.
+    cleaned = DISCORD_INVITE_PATTERN.sub("", cleaned)
+    # Remove normal URLs and scheme-less domains.
+    cleaned = URL_PATTERN.sub("", cleaned)
+    cleaned = BARE_DOMAIN_PATTERN.sub("", cleaned)
+    # Remove empty angle brackets left by Discord-style autolinks.
+    cleaned = re.sub(r"<\s*>", "", cleaned)
+    # Clean up whitespace and punctuation spacing left behind.
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 async def get_replied_message(
     ctx: commands.Context
 ):
@@ -393,14 +363,11 @@ async def get_replied_message(
     Returns the message that the command
     was replying to.
     """
-
     if ctx.message.reference is None:
         return None
-
     referenced_message = (
         ctx.message.reference.resolved
     )
-
     if referenced_message is None:
         try:
             referenced_message = (
@@ -408,22 +375,16 @@ async def get_replied_message(
                     ctx.message.reference.message_id
                 )
             )
-
         except discord.NotFound:
             return None
-
         except discord.Forbidden:
             return None
-
         except discord.HTTPException:
             logger.exception(
                 "Failed to fetch replied-to message"
             )
             return None
-
     return referenced_message
-
-
 async def send_long_response(
     interaction: discord.Interaction,
     text: str
@@ -432,15 +393,12 @@ async def send_long_response(
     Discord has a 2000-character message limit.
     Split long LLM responses into chunks.
     """
-
     if not text:
         return
-
     for i in range(0, len(text), 2000):
         await interaction.followup.send(
             text[i:i + 2000]
         )
-
 
 # -----------------------------
 # Global prefix-command protection
@@ -454,12 +412,10 @@ async def ignore_bot_users(
     Stops other bots from triggering
     prefix commands.
     """
-
     return (
         not ctx.author.bot
         and not is_blocked_user(ctx.author.id)
     )
-
 
 # -----------------------------
 # Startup
@@ -471,20 +427,16 @@ async def on_ready():
         "Logged in as %s",
         bot.user
     )
-
     try:
         synced = await bot.tree.sync()
-
         logger.info(
             "Synced %s slash commands",
             len(synced)
         )
-
     except Exception:
         logger.exception(
             "Failed to sync slash commands"
         )
-
 
 # -----------------------------
 # /paimon_ping
@@ -508,11 +460,9 @@ async def paimon_ping(
             ephemeral=True,
         )
         return
-
     await interaction.response.send_message(
         "Hi, I'm Paimon!"
     )
-
 
 # -----------------------------
 # /paimon_ask
@@ -531,20 +481,16 @@ async def paimon_ask(
     interaction: discord.Interaction,
     question: str,
 ):
-
     # -------------------------
     # Input validation
     # -------------------------
-
     question = question.strip()
-
     if not question:
         await interaction.response.send_message(
             "Please enter a question.",
             ephemeral=True
         )
         return
-
     if len(question) > MAX_QUESTION_LENGTH:
         await interaction.response.send_message(
             (
@@ -555,23 +501,19 @@ async def paimon_ask(
             ephemeral=True
         )
         return
-
     if looks_like_prompt_injection(question):
         logger.warning(
             "Potential prompt injection blocked | user=%s | question=%r",
             interaction.user,
             question[:200],
         )
-
         await interaction.response.send_message(
             "Nice try! Paimon's not falling for that one.",
             ephemeral=True
         )
         return
-
     # Tell Discord we're processing
     await interaction.response.defer()
-
     try:
         logger.info(
             "%s used /paimon_ask in guild %s | question=%r",
@@ -583,81 +525,68 @@ async def paimon_ask(
             ),
             question,
         )
-
         # Hard timeout
         async with asyncio.timeout(
             LLM_TIMEOUT_SECONDS
         ):
-
             # Global concurrency protection
             async with llm_semaphore:
-
                 logger.info(
                     "Starting LLM request | user=%s",
                     interaction.user,
                 )
-
                 answer = await run_paimon_chat(
                     question=question,
                     user_id=str(interaction.user.id),
                 )
-
                 logger.info(
                     "LLM completed | user=%s | answer_length=%s | answer_preview=%r",
                     interaction.user,
                     len(answer) if answer else 0,
                     answer[:100] if answer else None,
                 )
-
         if not answer:
             logger.warning(
                 "LLM returned empty answer | user=%s",
                 interaction.user,
             )
-
             await interaction.followup.send(
                 "I couldn't generate a response."
             )
             return
-
         logger.info(
             "Sending response to Discord | user=%s",
             interaction.user,
         )
-
+        display_question = remove_links(question)
+        display_answer = remove_links(answer)
         formatted_response = (
-            f"**Question:** {question}\n"
-            f"**Answer:** {answer}"
+            f"**Question:** {display_question}\n\n"
+            f"**Answer:** {display_answer}"
         )
-
         await send_long_response(
             interaction,
             formatted_response
 )
-
         logger.info(
             "Discord response sent successfully | user=%s",
             interaction.user,
         )
-
     except TimeoutError:
         logger.warning(
             "LLM request timed out | user=%s | question=%r",
             interaction.user,
             question[:200],
         )
-
         await interaction.followup.send(
             "That request took too long. Try again."
         )
-
     except Exception:
         logger.exception(
             "/paimon_ask failed | user=%s | question=%r",
             interaction.user,
             question[:200],
         )
-
         try:
             await interaction.followup.send(
                 "Something went wrong while generating the response."
@@ -682,41 +611,33 @@ async def paimon_ask(
 async def paimonify(
     ctx: commands.Context
 ):
-
     referenced_message = (
         await get_replied_message(ctx)
     )
-
     if referenced_message is None:
         await ctx.reply(
             "Reply to a message first, "
             "then use `!paimonify`."
         )
         return
-
-    original = referenced_message.content
-
+    original = remove_links(referenced_message.content)
     if not original:
         await ctx.reply(
             "That message has no text to process."
         )
         return
-
     if len(original) > MAX_REPLY_LENGTH:
         await ctx.reply(
             "That message is too long to process."
         )
         return
-
     try:
         transformed = paimonify_text(
             original
         )
-
         await referenced_message.reply(
             transformed
         )
-
         logger.info(
             "%s used !paimonify in guild %s",
             ctx.author,
@@ -726,16 +647,13 @@ async def paimonify(
                 else "DM"
             )
         )
-
     except Exception:
         logger.exception(
             "!paimonify failed"
         )
-
         await ctx.reply(
             "Something went wrong while processing that message."
         )
-
 
 # -----------------------------
 # !untard
@@ -752,11 +670,9 @@ async def paimonify(
 async def metric(
     ctx: commands.Context
 ):
-
     referenced_message = (
         await get_replied_message(ctx)
     )
-
     if referenced_message is None:
         await ctx.reply(
             "Reply to a message containing "
@@ -764,37 +680,30 @@ async def metric(
             "then use `!unretard`."
         )
         return
-
-    original = referenced_message.content
-
+    original = remove_links(referenced_message.content)
     if not original:
         await ctx.reply(
             "That message has no text to process."
         )
         return
-
     if len(original) > MAX_REPLY_LENGTH:
         await ctx.reply(
             "That message is too long to process."
         )
         return
-
     try:
         converted = convert_to_metric(
             original
         )
-
         if converted == original:
             await ctx.reply(
                 "I couldn't find any imperial "
                 "measurements to convert."
             )
             return
-
         await referenced_message.reply(
             converted
         )
-
         logger.info(
             "%s used !untard in guild %s",
             ctx.author,
@@ -804,12 +713,10 @@ async def metric(
                 else "DM"
             )
         )
-
     except Exception:
         logger.exception(
             "!untard failed"
         )
-
         await ctx.reply(
             "Something went wrong while "
             "converting that message."
@@ -826,49 +733,39 @@ async def metric(
     commands.BucketType.user
 )
 async def uwu(ctx: commands.Context):
-
     referenced_message = (
         await get_replied_message(ctx)
     )
-
     if referenced_message is None:
         await ctx.reply(
             "Reply to a message first, then use `!uwuify`."
         )
         return
-
-    original = referenced_message.content
-
+    original = remove_links(referenced_message.content)
     if not original:
         await ctx.reply(
             "That message has no text to process."
         )
         return
-
     if len(original) > MAX_REPLY_LENGTH:
         await ctx.reply(
             "That message is too long to process."
         )
         return
-
     try:
         transformed = uwuify_text(original)
-
         await referenced_message.reply(
             transformed
         )
-
         logger.info(
             "%s used !uwu in guild %s",
             ctx.author,
             ctx.guild.id if ctx.guild else "DM"
         )
-
     except Exception:
         logger.exception(
             "!uwu failed"
         )
-
         await ctx.reply(
             "Something went wrong while processing that message."
         )
@@ -893,29 +790,23 @@ async def duel(
             "Use `!duelpair option A/option B`."
         )
         return
-
     option_a, option_b = matchup.split("/", 1)
-
-    option_a = option_a.strip()
-    option_b = option_b.strip()
-
+    option_a = remove_links(option_a.strip())
+    option_b = remove_links(option_b.strip())
     if not option_a or not option_b:
         await ctx.reply(
             "Both sides of the duel need a value."
         )
         return
-
     winner = random.choice([
         option_a,
         option_b
     ])
-
     loser = (
         option_b
         if winner == option_a
         else option_a
     )
-
     message_templates = [
         "**{winner} got the Victory Royale.**",
         "**{winner} got sent to Ram Ranch.**",
@@ -954,7 +845,7 @@ async def duel(
         "**{winner}'s Discord account was flagged for inappropriate content.**",
         "**{winner} is the Lebron James of randomly selected options.**",
         "**{winner} is the Bronny James of randomly selected options.**",
-        "**{winner} was attacked by a kemonomimi in the woods. All of a sudden they have to take care of dozens of wolf children! Every night their number grows! Fail to do so and their partner, the Wolf Mama, will kill them! How many can they sustain?**", 
+        "**{winner} was attacked by a kemonomimi in the woods. All of a sudden they have to take care of dozens of wolf children! Every night their number grows! Fail to do so and their partner, the Wolf Mama, will kill them! How many can they sustain?**",
         "**Yumemizuki Mizuki will give {winner} good dreams tonight.**",
         "**Internet artists genderbent {winner}.**",
         "**Sending Scihub to {winner}'s location.**",
@@ -976,39 +867,32 @@ async def duel(
         "**{winner} plapped {loser}.**",
         "**{winner} NTR'd all of {loser}'s waifus in Mudae.**",
    ]
-
     # Exclude any template used in the previous 10 duels
     eligible_ids = [
         index
         for index in range(len(message_templates))
         if index not in RECENT_DUEL_MESSAGE_IDS
     ]
-
     # Safety fallback if the pool ever becomes too small
     if not eligible_ids:
         eligible_ids = list(
             range(len(message_templates))
         )
-
     message_id = random.choice(
         eligible_ids
     )
-
     RECENT_DUEL_MESSAGE_IDS.append(
         message_id
     )
-
     result = message_templates[
         message_id
     ].format(
         winner=winner,
         loser=loser,
     )
-
     await ctx.reply(
         result
     )
-
     logger.info(
         "%s used !duel: %s vs %s -> %s | message_id=%s",
         ctx.author,
@@ -1017,6 +901,7 @@ async def duel(
         winner,
         message_id,
     )
+
 # -----------------------------
 # !8ball
 # -----------------------------
@@ -1037,12 +922,10 @@ async def eight_ball(
             "Ask Paimon a yes-or-no question first!"
         )
         return
-
     answer = random.choice([
         "Yes.",
         "No.",
     ])
-
     await ctx.reply(
         f"🎱 Paimon says: **{answer}**"
     )
@@ -1051,50 +934,42 @@ async def eight_ball(
 # Im dad!
 # -----------------------------
 
-
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot or is_blocked_user(message.author.id):
         return
-
     triggered = False
     content = message.content.strip()
-
+    safe_content = remove_links(content)
     # Dadbot feature
     dadmatch = re.search(
         r"\b(?:i['’]?m|i am)\s+(.+)",
-        message.content,
+        safe_content,
         re.IGNORECASE,
     )
-
     if dadmatch and random.random() <= DADBOT_CHANCE:
         x = dadmatch.group(1).strip()
-
         if x:
             await message.reply(
                 f"Hi {x}, I'm Paimon!"
             )
             triggered = True
-
     # Random Chinese translation through the LangGraph translation route
     if (
         not triggered
-        and content
+        and safe_content
         and not content.startswith("!")
         and random.random() <= TRANSLATE_CHANCE
     ):
         try:
-            translation = await run_translation(content)
-
+            translation = await run_translation(safe_content)
             if translation:
-                await message.reply(translation)
+                await message.reply(remove_links(translation))
                 triggered = True
-
         except Exception:
             logger.exception(
                 "Random Chinese translation failed."
             )
-
     # Random reaction using custom emojis available in this server.
     if (
         not triggered
@@ -1109,15 +984,12 @@ async def on_message(message: discord.Message):
                 if emoji.available
                 and f"custom:{emoji.id}" not in RECENT_EMOJI_IDS
             ]
-
             fallback_emojis = [
                 emoji
                 for emoji in ["😂", "🌹", "💀", "🥀", "📮", "🫃"]
                 if f"unicode:{emoji}" not in RECENT_EMOJI_IDS
             ]
-
             available_emojis = custom_emojis + fallback_emojis
-
             if not available_emojis:
                 RECENT_EMOJI_IDS.clear()
                 available_emojis = (
@@ -1132,9 +1004,7 @@ async def on_message(message: discord.Message):
                     ]
                     + ["😂", "🌹", "💀", "🥀", "📮", "🫃"]
                 )
-
             emoji = random.choice(available_emojis)
-
             if isinstance(emoji, discord.Emoji):
                 RECENT_EMOJI_IDS.append(
                     f"custom:{emoji.id}"
@@ -1143,15 +1013,12 @@ async def on_message(message: discord.Message):
                 RECENT_EMOJI_IDS.append(
                     f"unicode:{emoji}"
                 )
-
             await message.add_reaction(emoji)
             triggered = True
-
         except Exception:
             logger.exception(
                 "Random emoji reaction failed."
             )
-
     await bot.process_commands(message)
 
 # -----------------------------
@@ -1163,10 +1030,8 @@ async def on_command_error(
     ctx: commands.Context,
     error
 ):
-
     if isinstance(error, commands.CheckFailure):
         return
-
     # User exceeded cooldown
     if isinstance(
         error,
@@ -1179,7 +1044,6 @@ async def on_command_error(
             )
         )
         return
-
     # User lacks required Discord permissions
     if isinstance(
         error,
@@ -1190,14 +1054,12 @@ async def on_command_error(
             "to use that command."
         )
         return
-
     # Ignore random !commands
     if isinstance(
         error,
         commands.CommandNotFound
     ):
         return
-
     logger.error(
         "Unhandled prefix command error",
         exc_info=(
@@ -1206,15 +1068,12 @@ async def on_command_error(
             error.__traceback__
         )
     )
-
     try:
         await ctx.reply(
             "Something went wrong."
         )
-
     except discord.HTTPException:
         pass
-
 
 # -----------------------------
 # Slash command error handling
@@ -1225,7 +1084,6 @@ async def on_app_command_error(
     interaction: discord.Interaction,
     error: app_commands.AppCommandError
 ):
-
     if isinstance(
         error,
         app_commands.CommandOnCooldown
@@ -1234,7 +1092,6 @@ async def on_app_command_error(
             "Slow down — try again in "
             f"{error.retry_after:.1f}s."
         )
-
     elif isinstance(
         error,
         app_commands.MissingPermissions
@@ -1243,7 +1100,6 @@ async def on_app_command_error(
             "You don't have permission "
             "to use that command."
         )
-
     else:
         logger.error(
             "Unhandled slash command error",
@@ -1253,33 +1109,25 @@ async def on_app_command_error(
                 error.__traceback__
             )
         )
-
         message = (
             "Something went wrong."
         )
-
     try:
-
         if interaction.response.is_done():
-
             await interaction.followup.send(
                 message,
                 ephemeral=True
             )
-
         else:
-
             await interaction.response.send_message(
                 message,
                 ephemeral=True
             )
-
     except discord.HTTPException:
         logger.exception(
             "Failed to send slash-command "
             "error response"
         )
-
 
 # -----------------------------
 # Start bot

@@ -76,6 +76,9 @@ def retrieve_from_index(
             {
                 "text": item["text"],
                 "source": item["source"],
+                "category": item.get("category"),
+                "file": item.get("file"),
+                "section": item.get("section"),
                 "chunk_number": item.get(
                     "chunk_number"
                 ),
