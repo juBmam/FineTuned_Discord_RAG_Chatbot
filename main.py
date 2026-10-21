@@ -51,9 +51,9 @@ MAX_CONCURRENT_LLM_REQUESTS = 3
 llm_semaphore = asyncio.Semaphore(
     MAX_CONCURRENT_LLM_REQUESTS
 )
-TRANSLATE_CHANCE = 0.01
-REACTION_CHANCE = 0.05
-DADBOT_CHANCE = 0.1
+TRANSLATE_CHANCE = 0.002
+REACTION_CHANCE = 0.01
+DADBOT_CHANCE = 0.05
 BLOCKED_USER_IDS = {
     int(value.strip())
     for value in os.getenv("BLOCKED_USER_IDS", "").split(",")
